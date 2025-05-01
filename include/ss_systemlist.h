@@ -7,6 +7,7 @@
 
 #include <string>
 #include <vector>
+#include <unordered_map>
 #include <tinyxml2.h>
 
 #include "ss_sytem.h"

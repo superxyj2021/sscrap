@@ -98,9 +98,14 @@ namespace ss_api {
 
         static void printe(int code, int delay);
 
+        static bool sortGameByNamePinYin(const Game &g1, const Game &g2);
+
         static std::string ss_devid;
         static std::string ss_devpassword;
         static std::string ss_softname;
+
+    private:
+        static std::vector<uint16_t> ss_vecCnSeqUnicode;
     };
 }
 
