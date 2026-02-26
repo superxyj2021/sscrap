@@ -5,6 +5,9 @@
 #include <cstdarg>
 #include <zlib.h>
 #include "ss_api.h"
+#include "pinyin_map.h"
+#include <algorithm> 
+
 
 using namespace ss_api;
 
@@ -268,3 +271,117 @@ void Api::printe(int code, int delay) {
         printc(COLOR_O, "NOK: timeout reached... retrying in %i seconds\n", delay);
     }
 }
+
+bool Api::sortGameByNamePinYin(const Game &g1, const Game &g2) {
+    const std::string &lhs = g1.name;
+    const std::string &rhs = g2.name;
+    
+    auto lhs_it = lhs.begin();
+    auto rhs_it = rhs.begin();
+    
+    while (lhs_it != lhs.end() && rhs_it != rhs.end()) {
+        // 检查当前字符是否为ASCII（英文）
+        bool lhs_is_ascii = (*lhs_it & 0x80) == 0;
+        bool rhs_is_ascii = (*rhs_it & 0x80) == 0;
+        
+        // 情况1：两个都是ASCII字符（英文）
+        if (lhs_is_ascii && rhs_is_ascii) {
+            char lhs_lower = std::tolower(static_cast<unsigned char>(*lhs_it));
+            char rhs_lower = std::tolower(static_cast<unsigned char>(*rhs_it));
+            
+            if (lhs_lower != rhs_lower) {
+                return lhs_lower < rhs_lower;
+            }
+            
+            ++lhs_it;
+            ++rhs_it;
+            continue;
+        }
+        
+        // 情况2：一个是ASCII，一个是非ASCII
+        if (lhs_is_ascii || rhs_is_ascii) {
+            // ASCII字符（英文）排序在非ASCII（中文）之前
+            return lhs_is_ascii;
+        }
+        
+        // 情况3：两个都是非ASCII字符（中文）
+        // UTF-8解码函数
+        auto decode_utf8 = [](std::string::const_iterator& it, const std::string::const_iterator end) -> char32_t {
+            if (it == end) return 0;
+            
+            unsigned char c = *it++;
+            if (c < 0x80) return c;
+            
+            char32_t result = 0;
+            int remaining = 0;
+            
+            if ((c & 0xE0) == 0xC0) {
+                result = c & 0x1F;
+                remaining = 1;
+            } else if ((c & 0xF0) == 0xE0) {
+                result = c & 0x0F;
+                remaining = 2;
+            } else if ((c & 0xF8) == 0xF0) {
+                result = c & 0x07;
+                remaining = 3;
+            } else {
+                return 0xFFFD; // 替换字符
+            }
+            
+            for (int i = 0; i < remaining; ++i) {
+                if (it == end || (*it & 0xC0) != 0x80) return 0xFFFD;
+                result = (result << 6) | (*it++ & 0x3F);
+            }
+            
+            return result;
+        };
+        
+        char32_t lhs_char = decode_utf8(lhs_it, lhs.end());
+        char32_t rhs_char = decode_utf8(rhs_it, rhs.end());
+        
+        // 获取汉字拼音（如果有）
+        std::string lhs_py;
+        std::string rhs_py;
+        
+        auto lhs_py_it = ChinesePinyin::hanziToPinyin.find(lhs_char);
+        if (lhs_py_it != ChinesePinyin::hanziToPinyin.end() && !lhs_py_it->second.empty()) {
+            lhs_py = lhs_py_it->second[0]; // 使用第一个拼音
+        }
+        
+        auto rhs_py_it = ChinesePinyin::hanziToPinyin.find(rhs_char);
+        if (rhs_py_it != ChinesePinyin::hanziToPinyin.end() && !rhs_py_it->second.empty()) {
+            rhs_py = rhs_py_it->second[0]; // 使用第一个拼音
+        }
+        
+        // 转换为小写比较
+        std::transform(lhs_py.begin(), lhs_py.end(), lhs_py.begin(), ::tolower);
+        std::transform(rhs_py.begin(), rhs_py.end(), rhs_py.begin(), ::tolower);
+        
+        // 比较逻辑
+        if (!lhs_py.empty() && !rhs_py.empty()) {
+            // 两个都有拼音，比较拼音
+            if (lhs_py != rhs_py) {
+                return lhs_py < rhs_py;
+            }
+        } else if (lhs_py.empty() != rhs_py.empty()) {
+            // 一个有拼音一个没有，有拼音的排前面
+            return !lhs_py.empty();
+        }
+        
+        // 拼音相同或都无法获取拼音，比较原始字符
+        if (lhs_char != rhs_char) {
+            return lhs_char < rhs_char;
+        }
+    }
+    
+    // 一个字符串是另一个的前缀，较短的排在前面
+    return lhs.size() < rhs.size();
+}
+
+
+
+
+
+
+
+

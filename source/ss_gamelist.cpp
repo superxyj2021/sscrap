@@ -54,6 +54,9 @@ bool GameList::append(const std::string &xmlPath, const std::string &rPath,
             if (it != files.end()) {
                 game.available = true;
                 files.erase(it);
+				// 增加判断如果是pgm.zip和neogeo.zip这两个bios文件的话，也跳过
+				if ( game.path == "pgm.zip" ||  game.path == "neogeo.zip" )
+					continue;
             } else if (availableOnly) {
                 // move to next node (game)
                 gameNode = gameNode->NextSibling();
@@ -167,7 +170,7 @@ void GameList::sortAlpha(bool byZipName, bool gamesOnly) {
     if (byZipName) {
         std::sort(games.begin(), games.end(), Api::sortGameByPath);
     } else {
-        std::sort(games.begin(), games.end(), Api::sortGameByName);
+        std::sort(games.begin(), games.end(), Api::sortGameByNamePinYin);
     }
 
     // sort lists
