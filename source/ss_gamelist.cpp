@@ -7,6 +7,8 @@
 #include "ss_api.h"
 #include "ss_gamelist.h"
 
+#define ROM_BIOS (1 << 4)
+
 using namespace ss_api;
 
 bool GameList::append(const std::string &xmlPath, const std::string &rPath,
@@ -55,8 +57,8 @@ bool GameList::append(const std::string &xmlPath, const std::string &rPath,
                 game.available = true;
                 files.erase(it);
 				// 增加判断如果是pgm.zip和neogeo.zip这两个bios文件的话，也跳过
-				if ( game.path == "pgm.zip" ||  game.path == "neogeo.zip" )
-					continue;
+				//if ( game.path == "pgm.zip" ||  game.path == "neogeo.zip" )
+				//	continue;
             } else if (availableOnly) {
                 // move to next node (game)
                 gameNode = gameNode->NextSibling();
@@ -126,9 +128,10 @@ bool GameList::append(const std::string &xmlPath, const std::string &rPath,
             // callback
             if (cb) cb(&game);
 
-            // add game to game list
-            games.emplace_back(game);
-
+			//判断下是不是bios 以及是否在fbneo的驱动中支持		
+			if (!(game.genre.id & ROM_BIOS) && game.name != "UnsupportedROM" && game.path != "neogeo.zip") {
+				games.emplace_back(game);
+			}	
             // move to next node (game)
             gameNode = gameNode->NextSibling();
         }
@@ -155,7 +158,12 @@ bool GameList::append(const std::string &xmlPath, const std::string &rPath,
         }
         // callback
         if (cb) cb(&game);
-        games.emplace_back(game);
+		
+		//判断下是不是bios 以及是否在fbneo的驱动中支持		
+		if (!(game.genre.id & ROM_BIOS) && game.name != "UnsupportedROM" && game.path != "neogeo.zip") {
+			games.emplace_back(game);
+		}		
+        //games.emplace_back(game);
     }
 
     if (sort) {
