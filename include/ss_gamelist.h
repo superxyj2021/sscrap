@@ -25,6 +25,9 @@ namespace ss_api {
 
         GameList() = default;
 
+        // reset all lists (used before a rescan)
+        void clear();
+
         bool append(const std::string &xmlPath, const std::string &romPath = "", bool sort = true,
                     const std::vector<std::string> &filters = {".zip"}, const System &system = {0, 0, "UNKNOWN"},
                     bool availableOnly = false, const GameAddedCb &cb = nullptr);
@@ -38,6 +41,12 @@ namespace ss_api {
 
         bool save(const std::string &dstPath, const std::string &imageType,
                   const std::string &thumbnailType, const std::string &videoType);
+
+        // compact binary cache of the built gamelist (games + filter lists).
+        // used to skip the rom scan on subsequent startups; see RomList::build.
+        bool saveBinary(const std::string &dstPath);
+
+        bool loadBinary(const std::string &srcPath);
 
         std::vector<Game> findGamesByName(const std::string &name);
 

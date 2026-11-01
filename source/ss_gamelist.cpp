@@ -4,12 +4,29 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstring>
+#include <fstream>
+#include <unordered_set>
 #include "ss_api.h"
 #include "ss_gamelist.h"
 
 #define ROM_BIOS (1 << 4)
 
 using namespace ss_api;
+
+void GameList::clear() {
+    games.clear();
+    romPaths.clear();
+    systemList.systems.clear();
+    editors.clear();
+    developers.clear();
+    genres.clear();
+    players.clear();
+    ratings.clear();
+    rotations.clear();
+    resolutions.clear();
+    dates.clear();
+}
 
 bool GameList::append(const std::string &xmlPath, const std::string &rPath,
                       bool sort, const std::vector<std::string> &filters,
@@ -24,120 +41,124 @@ bool GameList::append(const std::string &xmlPath, const std::string &rPath,
     }
 
     xml = xmlPath;
-    tinyxml2::XMLError e = doc.LoadFile(xmlPath.c_str());
-    if (e == tinyxml2::XML_SUCCESS) {
-        tinyxml2::XMLNode *pRoot = doc.FirstChildElement("gameList");
-        if (!pRoot) {
-            pRoot = doc.FirstChildElement("datafile");
+
+    // Per-rom gamelist.xml matching is no longer used: rom directories are
+    // scanned from file names and enriched by the core (chinese .glt list +
+    // FBNeo driver data). The xml path is kept ONLY for data files without a
+    // rom dir - i.e. loading favorites.xml (rPath empty).
+    if (rPath.empty() && !xmlPath.empty()) {
+        tinyxml2::XMLError e = doc.LoadFile(xmlPath.c_str());
+        if (e == tinyxml2::XML_SUCCESS) {
+            tinyxml2::XMLNode *pRoot = doc.FirstChildElement("gameList");
             if (!pRoot) {
-                SS_PRINT("GameList: wrong xml format: \'Data\', \'gameList\' or \'datafile\' tag not found\n");
-                format = Format::Unknown;
-                doc.Clear();
-                return false;
+                pRoot = doc.FirstChildElement("datafile");
+                if (!pRoot) {
+                    SS_PRINT("GameList: wrong xml format: \'Data\', \'gameList\' or \'datafile\' tag not found\n");
+                    format = Format::Unknown;
+                    doc.Clear();
+                    return false;
+                }
+                format = Format::FbNeoDat;
+            } else {
+                format = Format::EmulationStation;
             }
-            format = Format::FbNeoDat;
-        } else {
-            format = Format::EmulationStation;
-        }
 
-        tinyxml2::XMLNode *gameNode = pRoot->FirstChildElement("game");
-        while (gameNode) {
-            Game game;
-            Game::parseGame(&game, gameNode, "", format);
+            tinyxml2::XMLNode *gameNode = pRoot->FirstChildElement("game");
+            while (gameNode) {
+                Game game;
+                Game::parseGame(&game, gameNode, "", format);
 
-            // set game "real path", minus filename (for pFBN)
-            game.romsPath = rPath;
+                // set game "real path", minus filename (for pFBN)
+                game.romsPath = rPath;
 
-            // is rom available?
-            const std::string n = game.path;
-            auto it = std::find_if(files.begin(), files.end(), [n](const Io::File &f) {
-                return f.name == n;
-            });
-            if (it != files.end()) {
-                game.available = true;
-                files.erase(it);
-				// 增加判断如果是pgm.zip和neogeo.zip这两个bios文件的话，也跳过
-				//if ( game.path == "pgm.zip" ||  game.path == "neogeo.zip" )
-				//	continue;
-            } else if (availableOnly) {
+                // is rom available?
+                const std::string n = game.path;
+                auto it = std::find_if(files.begin(), files.end(), [n](const Io::File &f) {
+                    return f.name == n;
+                });
+                if (it != files.end()) {
+                    game.available = true;
+                    files.erase(it);
+                } else if (availableOnly) {
+                    // move to next node (game)
+                    gameNode = gameNode->NextSibling();
+                    continue;
+                }
+
+                // add stuff for later filtering
+                if (system.id) game.system = system;
+                System sys1 = game.system;
+                auto itSys = std::find_if(systemList.systems.begin(), systemList.systems.end(), [sys1](const System &sys2) {
+                    return sys1.id == sys2.id || sys1.name == sys2.name;
+                });
+                if (itSys == systemList.systems.end()) {
+                    systemList.systems.emplace_back(sys1);
+                }
+
+                Game::Editor ed = game.editor.name.empty() ? Game::Editor{0, "UNKNOWN"} : game.editor;
+                auto itEd = std::find_if(editors.begin(), editors.end(), [ed](const Game::Editor &e) {
+                    return ed.id == e.id || ed.name == e.name;
+                });
+                if (itEd == editors.end()) {
+                    editors.emplace_back(ed);
+                }
+
+                Game::Developer dev = game.developer.name.empty() ? Game::Developer{0, "UNKNOWN"} : game.developer;
+                auto itDev = std::find_if(developers.begin(), developers.end(), [dev](const Game::Developer &d) {
+                    return dev.id == d.id || dev.name == d.name;
+                });
+                if (itDev == developers.end()) {
+                    developers.emplace_back(dev);
+                }
+
+                Game::Genre genre = game.genre.name.empty() ? Game::Genre{0, "UNKNOWN"} : game.genre;
+                auto itGenre = std::find_if(genres.begin(), genres.end(), [genre](const Game::Genre &g) {
+                    return genre.id == g.id || genre.name == g.name;
+                });
+                if (itGenre == genres.end()) {
+                    genres.emplace_back(genre);
+                }
+
+                auto itPlayers = std::find(players.begin(), players.end(), game.playersInt);
+                if (itPlayers == players.end()) {
+                    players.emplace_back(game.playersInt);
+                }
+
+                auto itRat = std::find(ratings.begin(), ratings.end(), game.rating);
+                if (itRat == ratings.end()) {
+                    ratings.emplace_back(game.rating);
+                }
+
+                auto itRot = std::find(rotations.begin(), rotations.end(), game.rotation);
+                if (itRot == rotations.end()) {
+                    rotations.emplace_back(game.rotation);
+                }
+
+                std::string resolution = game.resolution.empty() ? "UNKNOWN" : game.resolution;
+                auto it2 = std::find(resolutions.begin(), resolutions.end(), resolution);
+                if (it2 == resolutions.end()) {
+                    resolutions.emplace_back(resolution);
+                }
+
+                it2 = std::find(dates.begin(), dates.end(), game.date);
+                if (it2 == dates.end()) {
+                    dates.emplace_back(game.date);
+                }
+
+                // callback
+                if (cb) cb(&game);
+
+                //判断下是不是bios 以及是否在fbneo的驱动中支持
+                if (!(game.genre.id & ROM_BIOS) && game.name != "UnsupportedROM" && game.path != "neogeo.zip") {
+                    games.emplace_back(game);
+                }
                 // move to next node (game)
                 gameNode = gameNode->NextSibling();
-                continue;
             }
-
-            // add stuff for later filtering
-            if (system.id) game.system = system;
-            System sys1 = game.system;
-            auto itSys = std::find_if(systemList.systems.begin(), systemList.systems.end(), [sys1](const System &sys2) {
-                return sys1.id == sys2.id || sys1.name == sys2.name;
-            });
-            if (itSys == systemList.systems.end()) {
-                systemList.systems.emplace_back(sys1);
-            }
-
-            Game::Editor ed = game.editor.name.empty() ? Game::Editor{0, "UNKNOWN"} : game.editor;
-            auto itEd = std::find_if(editors.begin(), editors.end(), [ed](const Game::Editor &e) {
-                return ed.id == e.id || ed.name == e.name;
-            });
-            if (itEd == editors.end()) {
-                editors.emplace_back(ed);
-            }
-
-            Game::Developer dev = game.developer.name.empty() ? Game::Developer{0, "UNKNOWN"} : game.developer;
-            auto itDev = std::find_if(developers.begin(), developers.end(), [dev](const Game::Developer &d) {
-                return dev.id == d.id || dev.name == d.name;
-            });
-            if (itDev == developers.end()) {
-                developers.emplace_back(dev);
-            }
-
-            Game::Genre genre = game.genre.name.empty() ? Game::Genre{0, "UNKNOWN"} : game.genre;
-            auto itGenre = std::find_if(genres.begin(), genres.end(), [genre](const Game::Genre &g) {
-                return genre.id == g.id || genre.name == g.name;
-            });
-            if (itGenre == genres.end()) {
-                genres.emplace_back(genre);
-            }
-
-            auto itPlayers = std::find(players.begin(), players.end(), game.playersInt);
-            if (itPlayers == players.end()) {
-                players.emplace_back(game.playersInt);
-            }
-
-            auto itRat = std::find(ratings.begin(), ratings.end(), game.rating);
-            if (itRat == ratings.end()) {
-                ratings.emplace_back(game.rating);
-            }
-
-            auto itRot = std::find(rotations.begin(), rotations.end(), game.rotation);
-            if (itRot == rotations.end()) {
-                rotations.emplace_back(game.rotation);
-            }
-
-            std::string resolution = game.resolution.empty() ? "UNKNOWN" : game.resolution;
-            auto it2 = std::find(resolutions.begin(), resolutions.end(), resolution);
-            if (it2 == resolutions.end()) {
-                resolutions.emplace_back(resolution);
-            }
-
-            it2 = std::find(dates.begin(), dates.end(), game.date);
-            if (it2 == dates.end()) {
-                dates.emplace_back(game.date);
-            }
-
-            // callback
-            if (cb) cb(&game);
-
-			//判断下是不是bios 以及是否在fbneo的驱动中支持		
-			if (!(game.genre.id & ROM_BIOS) && game.name != "UnsupportedROM" && game.path != "neogeo.zip") {
-				games.emplace_back(game);
-			}	
-            // move to next node (game)
-            gameNode = gameNode->NextSibling();
+            doc.Clear();
+        } else {
+            SS_PRINT("GameList: %s\n", doc.ErrorName());
         }
-        doc.Clear();
-    } else {
-        SS_PRINT("GameList: %s\n", doc.ErrorName());
     }
 
     // add "unknown" files (not in database)
@@ -531,4 +552,238 @@ size_t GameList::getCount(int systemId) {
     return std::count_if(games.begin(), games.end(), [systemId](const Game &game) {
         return game.system.id == systemId;
     });
+}
+// =============================================================================
+// binary cache (pemu: fast startup without rescanning roms)
+// format: "PCGL" magic + u32 version + u32 count, then per game all fields,
+// strings length-prefixed (u32 + bytes), integers native LE.
+// =============================================================================
+static void writeStr(std::ofstream &f, const std::string &s) {
+    uint32_t len = (uint32_t) s.size();
+    f.write((const char *) &len, 4);
+    if (len) f.write(s.data(), (std::streamsize) len);
+}
+
+static void writeI32(std::ofstream &f, int32_t v) { f.write((const char *) &v, 4); }
+static void writeU32(std::ofstream &f, uint32_t v) { f.write((const char *) &v, 4); }
+static void writeU64(std::ofstream &f, uint64_t v) { f.write((const char *) &v, 8); }
+
+bool GameList::saveBinary(const std::string &dstPath) {
+    std::ofstream f(dstPath, std::ios::binary | std::ios::trunc);
+    if (!f.is_open()) {
+        SS_PRINT("GameList::saveBinary: open failed: %s\n", dstPath.c_str());
+        return false;
+    }
+
+    f.write("PCGL", 4);
+    writeU32(f, 1);
+    writeU32(f, (uint32_t) romPaths.size());
+    for (const auto &rp : romPaths) {
+        writeStr(f, rp);
+    }
+    writeU32(f, (uint32_t) games.size());
+
+    for (const auto &g : games) {
+        writeU64(f, (uint64_t) g.id);
+        writeI32(f, g.rating);
+        writeI32(f, g.rotation);
+        f.put(g.available ? 1 : 0);
+        writeI32(f, g.playersInt);
+        writeStr(f, g.cloneOf);
+        writeStr(f, g.players);
+        writeStr(f, g.resolution);
+        writeStr(f, g.name);
+        writeStr(f, g.synopsis);
+        writeStr(f, g.date);
+        writeStr(f, g.path);
+        writeStr(f, g.romsPath);
+        writeI32(f, g.system.id);
+        writeI32(f, g.system.parentId);
+        writeStr(f, g.system.name);
+        writeI32(f, g.editor.id);
+        writeStr(f, g.editor.name);
+        writeI32(f, g.developer.id);
+        writeStr(f, g.developer.name);
+        writeI32(f, g.genre.id);
+        writeStr(f, g.genre.name);
+        writeU32(f, (uint32_t) g.medias.size());
+        for (const auto &m : g.medias) {
+            writeStr(f, m.url);
+            writeStr(f, m.type);
+            writeStr(f, m.format);
+        }
+    }
+
+    f.close();
+    printf("GameList::saveBinary: %s, %u games\n", dstPath.c_str(), (unsigned int) games.size());
+    return true;
+}
+
+bool GameList::loadBinary(const std::string &srcPath) {
+    // bulk-read the whole cache file in one shot: the old per-field ifstream
+    // read() ran ~20+ syscalls per game (~100k for 5000 games) on slow sd
+    std::ifstream f(srcPath, std::ios::binary | std::ios::ate);
+    if (!f.is_open()) {
+        return false;
+    }
+    std::streamsize size = f.tellg();
+    f.seekg(0, std::ios::beg);
+    std::vector<char> data((size_t) (size > 0 ? size : 0));
+    if (size > 0 && !f.read(data.data(), size)) {
+        return false;
+    }
+    const char *p = data.data();
+    const char *end = p + data.size();
+
+    auto readU32 = [&](uint32_t &v) -> bool {
+        if (end - p < 4) return false;
+        std::memcpy(&v, p, 4);
+        p += 4;
+        return true;
+    };
+    auto readI32 = [&](int32_t &v) -> bool {
+        if (end - p < 4) return false;
+        std::memcpy(&v, p, 4);
+        p += 4;
+        return true;
+    };
+    auto readU64 = [&](uint64_t &v) -> bool {
+        if (end - p < 8) return false;
+        std::memcpy(&v, p, 8);
+        p += 8;
+        return true;
+    };
+    auto readStr = [&](std::string &s) -> bool {
+        uint32_t len = 0;
+        if (!readU32(len)) return false;
+        if ((size_t) (end - p) < len) return false;
+        s.assign(p, len);
+        p += len;
+        return true;
+    };
+
+    char magic[4] = {0};
+    if (end - p < 4) {
+        return false;
+    }
+    std::memcpy(magic, p, 4);
+    p += 4;
+    if (std::memcmp(magic, "PCGL", 4) != 0) {
+        SS_PRINT("GameList::loadBinary: bad magic in %s\n", srcPath.c_str());
+        return false;
+    }
+
+    uint32_t version = 0, romPathCount = 0, count = 0;
+    if (!readU32(version) || version != 1 || !readU32(romPathCount)) {
+        return false;
+    }
+    romPaths.clear();
+    for (uint32_t i = 0; i < romPathCount; i++) {
+        std::string rp;
+        if (!readStr(rp)) return false;
+        romPaths.emplace_back(rp);
+    }
+    if (!readU32(count)) {
+        return false;
+    }
+
+    games.clear();
+    games.reserve(count);
+    for (uint32_t i = 0; i < count; i++) {
+        Game g;
+        uint64_t id = 0;
+        int32_t v = 0;
+        if (!readU64(id)) return false;
+        g.id = (unsigned long) id;
+        if (!readI32(g.rating)) return false;
+        if (!readI32(g.rotation)) return false;
+        if (end - p < 1) return false;
+        g.available = *p++ == 1;
+        if (!readI32(g.playersInt)) return false;
+        if (!readStr(g.cloneOf)) return false;
+        if (!readStr(g.players)) return false;
+        if (!readStr(g.resolution)) return false;
+        if (!readStr(g.name)) return false;
+        if (!readStr(g.synopsis)) return false;
+        if (!readStr(g.date)) return false;
+        if (!readStr(g.path)) return false;
+        if (!readStr(g.romsPath)) return false;
+        if (!readI32(g.system.id)) return false;
+        if (!readI32(g.system.parentId)) return false;
+        if (!readStr(g.system.name)) return false;
+        if (!readI32(g.editor.id)) return false;
+        if (!readStr(g.editor.name)) return false;
+        if (!readI32(g.developer.id)) return false;
+        if (!readStr(g.developer.name)) return false;
+        if (!readI32(g.genre.id)) return false;
+        if (!readStr(g.genre.name)) return false;
+        uint32_t mcount = 0;
+        if (!readU32(mcount)) return false;
+        g.medias.reserve(mcount);
+        for (uint32_t m = 0; m < mcount; m++) {
+            Game::Media media;
+            if (!readStr(media.url)) return false;
+            if (!readStr(media.type)) return false;
+            if (!readStr(media.format)) return false;
+            g.medias.emplace_back(media);
+        }
+        games.emplace_back(std::move(g));
+    }
+
+    // rebuild the filter lists from the loaded games (dedup via sets instead
+    // of the O(n^2) find_if over growing vectors)
+    systemList.systems.clear();
+    editors.clear();
+    developers.clear();
+    genres.clear();
+    players.clear();
+    ratings.clear();
+    rotations.clear();
+    resolutions.clear();
+    dates.clear();
+
+    std::unordered_set<int> editorIds, devIds, genreIds;
+    std::unordered_set<std::string> editorNames, devNames, genreNames;
+    std::unordered_set<std::string> resolutionSet, dateSet;
+
+    for (const auto &g : games) {
+        if (!systemList.find(g.system)) {
+            systemList.systems.emplace_back(g.system);
+        }
+        if (!editorIds.count(g.editor.id) && !editorNames.count(g.editor.name)) {
+            editors.emplace_back(g.editor);
+            editorIds.insert(g.editor.id);
+            editorNames.insert(g.editor.name);
+        }
+        if (!devIds.count(g.developer.id) && !devNames.count(g.developer.name)) {
+            developers.emplace_back(g.developer);
+            devIds.insert(g.developer.id);
+            devNames.insert(g.developer.name);
+        }
+        if (!genreIds.count(g.genre.id) && !genreNames.count(g.genre.name)) {
+            genres.emplace_back(g.genre);
+            genreIds.insert(g.genre.id);
+            genreNames.insert(g.genre.name);
+        }
+        if (std::find(players.begin(), players.end(), g.playersInt) == players.end()) {
+            players.emplace_back(g.playersInt);
+        }
+        if (std::find(ratings.begin(), ratings.end(), g.rating) == ratings.end()) {
+            ratings.emplace_back(g.rating);
+        }
+        if (std::find(rotations.begin(), rotations.end(), g.rotation) == rotations.end()) {
+            rotations.emplace_back(g.rotation);
+        }
+        std::string resolution = g.resolution.empty() ? "UNKNOWN" : g.resolution;
+        if (resolutionSet.insert(resolution).second) {
+            resolutions.emplace_back(resolution);
+        }
+        if (dateSet.insert(g.date).second) {
+            dates.emplace_back(g.date);
+        }
+    }
+
+    printf("GameList::loadBinary: %s, %u games, %zu systems\n",
+           srcPath.c_str(), (unsigned int) games.size(), systemList.systems.size());
+    return true;
 }
