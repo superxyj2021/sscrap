@@ -340,18 +340,8 @@ bool Api::sortGameByNamePinYin(const Game &g1, const Game &g2) {
         char32_t rhs_char = decode_utf8(rhs_it, rhs.end());
         
         // 获取汉字拼音（如果有）
-        std::string lhs_py;
-        std::string rhs_py;
-        
-        auto lhs_py_it = ChinesePinyin::hanziToPinyin.find(lhs_char);
-        if (lhs_py_it != ChinesePinyin::hanziToPinyin.end() && !lhs_py_it->second.empty()) {
-            lhs_py = lhs_py_it->second[0]; // 使用第一个拼音
-        }
-        
-        auto rhs_py_it = ChinesePinyin::hanziToPinyin.find(rhs_char);
-        if (rhs_py_it != ChinesePinyin::hanziToPinyin.end() && !rhs_py_it->second.empty()) {
-            rhs_py = rhs_py_it->second[0]; // 使用第一个拼音
-        }
+        std::string lhs_py = ChinesePinyin::getFirstPinyin(lhs_char);
+        std::string rhs_py = ChinesePinyin::getFirstPinyin(rhs_char);
         
         // 转换为小写比较
         std::transform(lhs_py.begin(), lhs_py.end(), lhs_py.begin(), ::tolower);
